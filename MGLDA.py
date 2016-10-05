@@ -1,15 +1,14 @@
-import sys
+import sys, os
+import h5py
 from preprocessing import *
-from handle_pp_objects import *
 from scipy.special import gammaln
 
 # The global number of topics
-K_GL = 20
-K_LOC = 7
+K_GL = 40
+K_LOC = 10
 N_GIBBS_SAMPLING_ITERATIONS = 500
 
 global product
-
 
 def log_multi_beta(alpha, K=None):
     """
@@ -50,19 +49,6 @@ def count_sent_docs(revs):
     return docs_sent_len, max_number_s
 
 
-def word_indices(vec):
-    """
-    taken from gist.github.com/mblondel/542786
-
-    Turn a document vector of size vocab_size to a sequence
-    of word indices. The word indices are between 0 and
-    vocab_size-1. The sequence length is equal to the document length.
-    """
-    for idx in vec.nonzero()[0]:
-        for i in xrange(int(vec[idx])):
-            yield idx
-
-
 class LDAModel(object):
 
     def __init__(self, l_bag_of_words, doc_sentences_words, doc_s_count, max_number_s, num_of_gl_topics, num_of_loc_topics,
@@ -72,8 +58,8 @@ class LDAModel(object):
         # number of sentences covered by a sliding window. Ivan uses 3 in his paper
         self.n_windows = 3
         # number of docs/reviews, max number of sentences/review in corpus, total vocabulary size of corpus
-        self.n_docs = doc_s_count.shape[0]
-        self.num_of_max_sentences = max_number_s
+        self.n_docs = int(doc_s_count.shape[0])
+        self.num_of_max_sentences = int(max_number_s)
         self.vocab_size = len(l_bag_of_words)
         self.num_of_gl_topics = num_of_gl_topics
         self.num_of_loc_topics = num_of_loc_topics
@@ -449,15 +435,15 @@ class LDAModel(object):
         for k in range(self.num_of_loc_topics):
             self.acc_phi_dist_loc[k, :] = nkw_aug[k, :] * 1/np.sum(nkw_aug[k, :])
 
-    def store_acc_phi_matrices(self, save_file):
+    def store_acc_phi_matrices(self, ofname):
 
-        h5f = h5py.File(save_file, 'w')
+        h5f = h5py.File(ofname, 'w')
         h5f.create_dataset('acc_phi_dist_gl', data=self.acc_phi_dist_gl)
         h5f.create_dataset('acc_phi_dist_loc', data=self.acc_phi_dist_loc)
         h5f.close()
 
-    def store_counters(self, save_file):
-        h5f = h5py.File(save_file, 'w')
+    def store_counters(self, ofname):
+        h5f = h5py.File(ofname, 'w')
         h5f.create_dataset('nkw_gl', data=self.nkw_gl)
         h5f.create_dataset('nkw_loc', data=self.nkw_loc)
         h5f.create_dataset('ndv', data=self.ndv)
@@ -475,12 +461,43 @@ class LDAModel(object):
 
         h5f.close()
 
-    def store_results(self, save_file):
+    def store_results(self, ofname):
         # store the theta and phi matrix
-        h5f = h5py.File(save_file, 'w')
+        h5f = h5py.File(ofname, 'w')
         h5f.create_dataset('phi_global', data=self.phi_dist_gl)
         h5f.create_dataset('phi_local', data=self.phi_dist_loc)
         h5f.close()
+
+    def print_topics(self, ofname):
+        global id2word
+
+        with open(ofname, 'w+') as fout:
+
+            for i in range(self.num_of_gl_topics):
+                fout.write('------ Global topic {0} ------\n'.format(i))
+                word_counts = self.nkw_gl[i]
+                sum_count = sum(word_counts)
+                word_probs = [w*1.0 / sum_count for w in word_counts ]
+
+                topic_words = sorted(range(len(word_counts)),key=lambda x:word_counts[x], reverse=True)
+                ostr = ''
+                for j in range(30):
+                    ostr += '{0}, {1:.4f}\n'.format(id2word[topic_words[j]], word_probs[topic_words[j]])
+                fout.write(ostr+'\n')
+
+            fout.write('\n')
+            for i in range(self.num_of_loc_topics):
+                fout.write('------ Local topic {0} ------\n'.format(i))
+                word_counts = self.nkw_loc[i]
+                sum_count = sum(word_counts)
+                word_probs = [w*1.0 / sum_count for w in word_counts ]
+
+                topic_words = sorted(range(len(word_counts)),key=lambda x:word_counts[x], reverse=True)
+                ostr = ''
+                for j in range(30):
+                    ostr += '{0}, {1:.4f}\n'.format(id2word[topic_words[j]], word_probs[topic_words[j]])
+                fout.write(ostr+'\n')
+
 
 if __name__ == '__main__':
 
@@ -490,30 +507,40 @@ if __name__ == '__main__':
         (2) directory path for input & output files
     """
     global reviews
+    global id2word
 
     if len(sys.argv) == 1:
         preprocess = "True"
-        # dir_path = 'F:/temp/topics/D - data/movie/test/'
-        product = "electronics"
-        dir_path = 'S:/Workspace/data/sports/'
+        product = "software"
+        dir_path = './data/sorted_data/'
+        opath = './output/' + product +'/'
     else:
         preprocess = sys.argv[1]
         dir_path = sys.argv[2]
 
-    mem_file_results = dir_path + "mglda_" + product + "_" + str(N_GIBBS_SAMPLING_ITERATIONS) + ".mem"
+    if not os.path.exists(opath):
+        os.makedirs(opath)
+
+    ofn_model = opath + "mglda_" + product + "_" + str(N_GIBBS_SAMPLING_ITERATIONS) + ".mem"
+    ofn_counter = opath + "mglda_" + product + "_" + str(N_GIBBS_SAMPLING_ITERATIONS) + ".counter"
+    ofn_topics = opath + "mglda_" + product + "_" + str(N_GIBBS_SAMPLING_ITERATIONS) + ".topics"
 
     if preprocess == 'True':
-        inFile = dir_path +  "all.review.xml"
-        reviews, d_vocab, l_bag_of_words, m_doc_words, m_docs_sentence_words = preprocessing(inFile)
+        inFile = os.path.join(*[dir_path, product, "all.review"])
+        reviews, l_bag_of_words, m_doc_words, m_docs_sentence_words = preprocess_dataset(inFile)
     else:
-        reviews, d_vocab, l_bag_of_words, m_doc_words, m_docs_sentence_words = load_objects(dir_path, product)
+        print 'Preprocessed file not support yet'
+        sys.exit(1)
+    sys.exit(1)
+
+    id2word = dict([(word_id, word) for word_id, word in enumerate(l_bag_of_words)])
 
     # check_doc_word_matrix(doc_words, reviews, w)
     # last parameter is the max number of sentences for corpus
     doc_sentence_count, max_number_s = count_sent_docs(reviews)
     # create LDAModel object and initialize counters for Gibbs sampling
-    lda = LDAModel(l_bag_of_words, m_docs_sentence_words, doc_sentence_count, max_number_s, K_GL, K_LOC, 0.005, 0.005, 0.005, 0.005,
-                   0.005, 0.005, 0.005, dir_path)
+    lda = LDAModel(l_bag_of_words, m_docs_sentence_words, doc_sentence_count, max_number_s, K_GL, K_LOC,\
+            0.005, 0.005, 0.005, 0.005, 0.005, 0.005, 0.005, dir_path)
     # initialize counters
     start = timer()
     print "LDA initialize..."
@@ -528,8 +555,6 @@ if __name__ == '__main__':
     lda.run_gibbs_sampling(num_of_iterations)
     end = timer()
     print "Gibbs sampling time %s" % (end - start)
-    lda.store_results(mem_file_results)
-
-    mem_file_counter = dir_path + product + "_counters_" + str(N_GIBBS_SAMPLING_ITERATIONS) + ".mem"
-    lda.store_counters(mem_file_counter)
-
+    lda.store_results(ofn_model)
+    lda.store_counters(ofn_counter)
+    lda.print_topics(ofn_topics)
