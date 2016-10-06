@@ -1,6 +1,6 @@
 import sys, os
 import h5py
-from preprocessing import *
+from preprocessing_review import *
 from scipy.special import gammaln
 
 # The global number of topics
@@ -51,7 +51,7 @@ def count_sent_docs(revs):
 
 class LDAModel(object):
 
-    def __init__(self, l_bag_of_words, doc_sentences_words, doc_s_count, max_number_s, num_of_gl_topics, num_of_loc_topics,
+    def __init__(self, l_id2word, doc_sentences_words, doc_s_count, max_number_s, num_of_gl_topics, num_of_loc_topics,
                  alpha_gl, alpha_loc, beta_gl, beta_loc, gamma, alpha_mix_gl, alpha_mix_loc, dir_out):
 
         self.dir_out = dir_out
@@ -60,7 +60,7 @@ class LDAModel(object):
         # number of docs/reviews, max number of sentences/review in corpus, total vocabulary size of corpus
         self.n_docs = int(doc_s_count.shape[0])
         self.num_of_max_sentences = int(max_number_s)
-        self.vocab_size = len(l_bag_of_words)
+        self.vocab_size = len(l_id2word)
         self.num_of_gl_topics = num_of_gl_topics
         self.num_of_loc_topics = num_of_loc_topics
         # vector with number of sentences for each document
@@ -126,8 +126,7 @@ class LDAModel(object):
 
         # matrix that holds per document the counts for the words (dims: #of_docs X #words_in_bag)
         self.doc_sentences_words = doc_sentences_words
-        # the bag of words
-        self.bag_of_words = l_bag_of_words
+        self.id2word = l_id2word
         # phi = p(w|k) distribution, matrix of num of topics X num of words in corpus
         self.phi_dist = np.zeros((self.num_of_gl_topics, self.vocab_size))
         # theta distribution = p(k|d), matrix of num of docs X num of topics
@@ -159,7 +158,7 @@ class LDAModel(object):
                 # print "sentence %d" % (s+1), np.sum(self.doc_sentences_words[d, s, :]),
                 # len(self.doc_sentences_words[d, s, :])
                 for i, wd in enumerate(self.doc_sentences_words[d][s]):
-                    # print i, self.bag_of_words.keys()[wd]
+                    # print i, self.id2word.keys()[wd]
                     # choose one of the three windows that can be associated with the specific sentence
                     # a number between 0-2 (currently with 3 possible windows per sentence
                     # s + 0/1/2 e.g. document sentence 1 can belong to window {1,2,3} and
@@ -185,7 +184,7 @@ class LDAModel(object):
                         self.ndv_gl[d, s+v] += 1
                         self.nk_gl[k] += 1
                         # print "(d,s,i) (%d,%d,%d) k %d v %d gl word %d %s " % (d, s, i, k, v, wd,
-                        # self.bag_of_words.keys()[wd]), self.nkw_gl[k, wd]
+                        # self.id2word.keys()[wd]), self.nkw_gl[k, wd]
                     else:
                         # local topic assignment
                         k = np.random.randint(self.num_of_loc_topics)
@@ -196,7 +195,7 @@ class LDAModel(object):
                         self.nd_loc[d] += 1
                         self.nk_loc[k] += 1
                         # print "(d,s,i) (%d,%d,%d) k %d v %d loc word %d %s " % (d, s, i, k, v, wd,
-                        # self.bag_of_words.keys()[wd]), self.nkw_loc[k, wd]
+                        # self.id2word.keys()[wd]), self.nkw_loc[k, wd]
 
                     self.doc_w_topics_assgn[(d, s, i)] = k  # assign topic to word in document!
 
@@ -214,7 +213,7 @@ class LDAModel(object):
             self.nd_gl[d] -= 1
             self.ndv_gl[d, s+v] -= 1
             self.nk_gl[k] -= 1
-            # print "i-is %d lower gl word %d %s %d" % (i, wd, self.bag_of_words.keys()[wd], k), self.nkw_gl[k, wd]
+            # print "i-is %d lower gl word %d %s %d" % (i, wd, self.id2word.keys()[wd], k), self.nkw_gl[k, wd]
         else:
             self.nkw_loc[k, wd] -= 1
             self.ndk_loc[d, k] -= 1
@@ -222,7 +221,7 @@ class LDAModel(object):
             self.ndvk_loc[d, s+v, k] -= 1
             self.nd_loc[d] -= 1
             self.nk_loc[k] -= 1
-            # print "i-is %s lower loc word %d %s %d" % (i, wd, self.bag_of_words.keys()[wd], k), self.nkw_loc[k, wd]
+            # print "i-is %s lower loc word %d %s %d" % (i, wd, self.id2word.keys()[wd], k), self.nkw_loc[k, wd]
 
     def increase_counts(self, d, s, k, v, r, wd):
 
@@ -364,7 +363,7 @@ class LDAModel(object):
                         k = self.doc_w_topics_assgn[(d, s, i)]
                         v = self.doc_w_window_assgn[(d, s, i)]
                         r = self.doc_w_gl_loc_assgn[(d, s, i)]
-                        # print self.bag_of_words[wd], r,v,k
+                        # print self.id2word[wd], r,v,k
                         # lower all counts
                         self.lower_counts(d, s, k, v, r, wd)
                         # start = timer()
@@ -509,14 +508,9 @@ if __name__ == '__main__':
     global reviews
     global id2word
 
-    if len(sys.argv) == 1:
-        preprocess = "True"
-        product = "software"
-        dir_path = './data/sorted_data/'
-        opath = './output/' + product +'/'
-    else:
-        preprocess = sys.argv[1]
-        dir_path = sys.argv[2]
+    product = "baby"
+    dir_path = './review_data/'
+    opath = './output/' + product +'/'
 
     if not os.path.exists(opath):
         os.makedirs(opath)
@@ -525,21 +519,14 @@ if __name__ == '__main__':
     ofn_counter = opath + "mglda_" + product + "_" + str(N_GIBBS_SAMPLING_ITERATIONS) + ".counter"
     ofn_topics = opath + "mglda_" + product + "_" + str(N_GIBBS_SAMPLING_ITERATIONS) + ".topics"
 
-    if preprocess == 'True':
-        inFile = os.path.join(*[dir_path, product, "all.review"])
-        reviews, l_bag_of_words, m_doc_words, m_docs_sentence_words = preprocess_dataset(inFile)
-    else:
-        print 'Preprocessed file not support yet'
-        sys.exit(1)
-    sys.exit(1)
-
-    id2word = dict([(word_id, word) for word_id, word in enumerate(l_bag_of_words)])
+    id2word, m_docs_sentence_words = preprocess_dataset(product, dir_path+product)
 
     # check_doc_word_matrix(doc_words, reviews, w)
     # last parameter is the max number of sentences for corpus
-    doc_sentence_count, max_number_s = count_sent_docs(reviews)
+    doc_sentence_count, max_number_s = count_sent_docs(m_docs_sentence_words)
+    print doc_sentence_count, max_number_s
     # create LDAModel object and initialize counters for Gibbs sampling
-    lda = LDAModel(l_bag_of_words, m_docs_sentence_words, doc_sentence_count, max_number_s, K_GL, K_LOC,\
+    lda = LDAModel(id2word, m_docs_sentence_words, doc_sentence_count, max_number_s, K_GL, K_LOC,\
             0.005, 0.005, 0.005, 0.005, 0.005, 0.005, 0.005, dir_path)
     # initialize counters
     start = timer()
